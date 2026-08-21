@@ -363,11 +363,29 @@ def procesar_conciliacion(dian_pdfs, excel_subpartidas, excel_anexos):
             
             extractor_dian = ExtractorDIANSimplificado()
             datos_dian = extractor_dian.procesar_multiples_dis(temp_dir)
-            
+            errores_extraccion = getattr(extractor_dian, 'errores_extraccion', [])
+
             if datos_dian is None or datos_dian.empty:
                 st.error("❌ No se pudieron extraer datos de las DIM")
+                if errores_extraccion:
+                    st.markdown("#### Detalle de errores por archivo")
+                    st.dataframe(
+                        pd.DataFrame(errores_extraccion),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                else:
+                    st.warning("No se encontró ningún archivo PDF para procesar.")
                 return None
-            
+
+            if errores_extraccion:
+                st.warning("Algunos PDF no pudieron procesarse:")
+                st.dataframe(
+                    pd.DataFrame(errores_extraccion),
+                    use_container_width=True,
+                    hide_index=True
+                )
+
             st.success(f"✅ {len(datos_dian)} declaraciones DIAN extraídas")
             
             extractor_subpartidas = ExtractorSubpartidas()

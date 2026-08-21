@@ -47,6 +47,9 @@ class CorrectorNombres:
 
 class ExtractorDIANSimplificado:
     def __init__(self):
+        # Se conserva el detalle para que la interfaz pueda explicar por qué un
+        # archivo no fue procesado, en lugar de mostrar un error genérico.
+        self.errores_extraccion = []
         self.CAMPOS_DI = {
             "4.": "4. Número DI",
             "55.": "55. Cod. de Bandera", 
@@ -144,8 +147,17 @@ class ExtractorDIANSimplificado:
                     texto = pagina.extract_text(x_tolerance=3, y_tolerance=3)
                     if texto:
                         texto_completo += texto + "\n\n"
+            if not texto_completo.strip():
+                self.errores_extraccion.append({
+                    'archivo': os.path.basename(pdf_path),
+                    'error': 'No se encontró texto extraíble. El PDF podría ser escaneado o contener solo imágenes.'
+                })
             return texto_completo
-        except Exception:
+        except Exception as error:
+            self.errores_extraccion.append({
+                'archivo': os.path.basename(pdf_path),
+                'error': f'No se pudo abrir o leer el PDF: {type(error).__name__}: {error}'
+            })
             return ""
 
     def extraer_campo(self, texto, patrones, campo_nombre=""):
@@ -213,7 +225,11 @@ class ExtractorDIANSimplificado:
     def procesar_multiples_dis(self, folder_path):
         if not os.path.isdir(folder_path): return None
         all_results = []
-        pdf_files = glob.glob(os.path.join(folder_path, "*.pdf"))
+        # La carga puede conservar extensiones .PDF en mayúsculas.
+        pdf_files = [
+            archivo for archivo in glob.glob(os.path.join(folder_path, "*"))
+            if os.path.isfile(archivo) and archivo.lower().endswith('.pdf')
+        ]
         if not pdf_files: return None
 
         for pdf_file_path in pdf_files:
