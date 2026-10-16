@@ -341,145 +341,473 @@ def mostrar_resumen_comparacion_simplificado(reporte_comparacion, reporte_anexos
 # =============================================================================
 
 def procesar_conciliacion(dian_pdfs, excel_subpartidas, excel_anexos):
-    """Procesa la conciliación con los archivos cargados - ACTUALIZADA"""
-    
+    """Procesa la conciliación DIM vs Subpartidas y validación de anexos FMM."""
+
     with tempfile.TemporaryDirectory() as temp_dir:
         try:
-            # Guardar archivos en temporal
+            # ============================================================
+            # 1. GUARDAR ARCHIVOS CARGADOS EN DIRECTORIO TEMPORAL
+            # ============================================================
+            st.info("📁 Preparando archivos para el procesamiento...")
+
+            # Guardar PDFs DIAN
             for pdf in dian_pdfs:
-                with open(os.path.join(temp_dir, pdf.name), "wb") as f:
+                pdf_path = os.path.join(temp_dir, pdf.name)
+
+                with open(pdf_path, "wb") as f:
                     f.write(pdf.getbuffer())
-            
-            excel_sub_path = os.path.join(temp_dir, excel_subpartidas.name)
+
+            # Guardar Excel de subpartidas
+            excel_sub_path = os.path.join(
+                temp_dir,
+                excel_subpartidas.name
+            )
+
             with open(excel_sub_path, "wb") as f:
                 f.write(excel_subpartidas.getbuffer())
-            
-            excel_anexos_path = os.path.join(temp_dir, excel_anexos.name)  
+
+            # Guardar Excel de anexos
+            excel_anexos_path = os.path.join(
+                temp_dir,
+                excel_anexos.name
+            )
+
             with open(excel_anexos_path, "wb") as f:
                 f.write(excel_anexos.getbuffer())
 
-            # Procesar comparación DIM vs Subpartidas
-            st.info("🔍 Comparando DIM vs Subpartidas...")
-            
-            extractor_dian = ExtractorDIANSimplificado()
-            datos_dian = extractor_dian.procesar_multiples_dis(temp_dir)
-            errores_extraccion = getattr(extractor_dian, 'errores_extraccion', [])
+            # ============================================================
+            # 2. MOSTRAR ARCHIVOS DISPONIBLES
+            # ============================================================
+            st.write("📂 Archivos preparados:")
 
+            archivos_temporales = os.listdir(temp_dir)
+
+            for archivo in archivos_temporales:
+                st.write(f"• {archivo}")
+
+            # ============================================================
+            # 3. PROCESAR DIM
+            # ============================================================
+            st.info("🔍 Comparando DIM vs Subpartidas...")
+
+            extractor_dian = ExtractorDIANSimplificado()
+
+            datos_dian = extractor_dian.procesar_multiples_dis(temp_dir)
+
+            errores_extraccion = getattr(
+                extractor_dian,
+                "errores_extraccion",
+                []
+            )
+
+            # ------------------------------------------------------------
+            # Validar extracción DIAN
+            # ------------------------------------------------------------
             if datos_dian is None or datos_dian.empty:
-                st.error("❌ No se pudieron extraer datos de las DIM")
+
+                st.error("❌ No se pudieron extraer datos de las DIM.")
+
                 if errores_extraccion:
-                    st.markdown("#### Detalle de errores por archivo")
+
+                    st.markdown("### Detalle de errores por archivo")
+
                     st.dataframe(
                         pd.DataFrame(errores_extraccion),
                         use_container_width=True,
                         hide_index=True
                     )
+
                 else:
-                    st.warning("No se encontró ningún archivo PDF para procesar.")
+
+                    st.warning(
+                        "No se encontró ningún archivo PDF válido para procesar."
+                    )
+
                 return None
 
+            # ------------------------------------------------------------
+            # Mostrar errores parciales
+            # ------------------------------------------------------------
             if errores_extraccion:
-                st.warning("Algunos PDF no pudieron procesarse:")
+
+                st.warning(
+                    "⚠️ Algunos archivos PDF no pudieron procesarse."
+                )
+
                 st.dataframe(
                     pd.DataFrame(errores_extraccion),
                     use_container_width=True,
                     hide_index=True
                 )
 
-            st.success(f"✅ {len(datos_dian)} declaraciones DIAN extraídas")
-            
-            extractor_subpartidas = ExtractorSubpartidas()
-            datos_subpartidas = extractor_subpartidas.extraer_y_estandarizar(temp_dir)
-            
-            if datos_subpartidas.empty:
-                st.error("❌ No se pudieron extraer datos del archivo de subpartidas")
-                return None
-            
-            st.success(f"✅ Datos de subpartidas extraídos: {len(datos_subpartidas)} registros")
-            
-            # Detectar si hay múltiples subpartidas para mostrar info
-            comparador = ComparadorDatos()
-            multiples_subpartidas = comparador.detectar_multiples_subpartidas(datos_subpartidas)
-            
-            if multiples_subpartidas:
-                st.info(f"🔍 Detectadas {len(datos_subpartidas)} subpartidas - Aplicando lógica de suma y comparación")
-            else:
-                st.info("🔍 Subpartida única detectada - Aplicando lógica estándar")
-            
-            output_comparacion = os.path.join(temp_dir, "comparacion_dim_subpartidas.xlsx")
-            reporte_comparacion = comparador.generar_reporte_comparacion(
-                datos_dian, datos_subpartidas, output_comparacion
+            st.success(
+                f"✅ {len(datos_dian)} declaraciones DIAN extraídas."
             )
 
-            # Procesar validación de anexos
-            st.info("🔄 Validando anexos FMM...")
-            
-            validador = ValidadorDeclaracionImportacionCompleto()
-            output_anexos = os.path.join(temp_dir, "validacion_anexos.xlsx")
-            
-            # CAPTURAR LA SALIDA DE CONSOLA DEL VALIDADOR
-            output_buffer = io.StringIO()
-            
-            with redirect_stdout(output_buffer):
-                resultado_validacion = validador.procesar_validacion_completa(temp_dir, output_anexos)
-            
-            # Obtener la salida de consola
-            consola_output = output_buffer.getvalue()
-            
-            # EXTRAER DATOS REALES DEL PROCESAMIENTO CON LAS NUEVAS FUNCIONES
-            datos_proveedor = extraer_datos_de_consola_mejorado(consola_output)
-            resumen_codigos, validacion_integridad = extraer_resumen_de_consola_mejorado(consola_output)
-            estadisticas_validacion = extraer_estadisticas_de_consola_mejorado(consola_output, datos_dian)
-            
-            # Si el validador retorna un diccionario, usarlo, sino usar los datos extraídos
-            if isinstance(resultado_validacion, dict):
-                reporte_anexos = resultado_validacion.get('reporte_anexos')
-                # Combinar con datos extraídos de consola
-                datos_proveedor = resultado_validacion.get('datos_proveedor', datos_proveedor)
-                resumen_codigos = resultado_validacion.get('resumen_codigos', resumen_codigos)
-                estadisticas_validacion = resultado_validacion.get('estadisticas_validacion', estadisticas_validacion)
+            # ============================================================
+            # 4. PROCESAR SUBPARTIDAS
+            # ============================================================
+            st.info("📊 Procesando archivo de subpartidas...")
+
+            extractor_subpartidas = ExtractorSubpartidas()
+
+            datos_subpartidas = (
+                extractor_subpartidas.extraer_y_estandarizar(temp_dir)
+            )
+
+            # ------------------------------------------------------------
+            # Validar subpartidas
+            # ------------------------------------------------------------
+            if datos_subpartidas is None or datos_subpartidas.empty:
+
+                st.error(
+                    "❌ No se pudieron extraer datos del archivo de subpartidas."
+                )
+
+                return None
+
+            st.success(
+                f"✅ Datos de subpartidas extraídos: "
+                f"{len(datos_subpartidas)} registros."
+            )
+
+            # ============================================================
+            # 5. DETECTAR MÚLTIPLES SUBPARTIDAS
+            # ============================================================
+            comparador = ComparadorDatos()
+
+            multiples_subpartidas = (
+                comparador.detectar_multiples_subpartidas(
+                    datos_subpartidas
+                )
+            )
+
+            if multiples_subpartidas:
+
+                st.info(
+                    f"🔍 Detectadas {len(datos_subpartidas)} subpartidas. "
+                    "Aplicando lógica de suma y comparación."
+                )
+
             else:
+
+                st.info(
+                    "🔍 Subpartida única detectada. "
+                    "Aplicando lógica estándar."
+                )
+
+            # ============================================================
+            # 6. GENERAR REPORTE DIM VS SUBPARTIDAS
+            # ============================================================
+            st.info("📄 Generando reporte de comparación...")
+
+            output_comparacion = os.path.join(
+                temp_dir,
+                "comparacion_dim_subpartidas.xlsx"
+            )
+
+            reporte_comparacion = None
+
+            try:
+
+                reporte_comparacion = (
+                    comparador.generar_reporte_comparacion(
+                        datos_dian,
+                        datos_subpartidas,
+                        output_comparacion
+                    )
+                )
+
+            except Exception as e:
+
+                st.error(
+                    "❌ Error al generar el reporte DIM vs Subpartidas."
+                )
+
+                st.code(
+                    traceback.format_exc()
+                )
+
+                return None
+
+            # ============================================================
+            # 7. VALIDAR QUE EL EXCEL REALMENTE FUE CREADO
+            # ============================================================
+            if os.path.exists(output_comparacion):
+
+                st.success(
+                    "✅ Reporte DIM vs Subpartidas generado correctamente."
+                )
+
+                st.write(
+                    f"📄 Archivo: {output_comparacion}"
+                )
+
+                try:
+
+                    with open(output_comparacion, "rb") as f:
+                        st.session_state.comparacion_data = f.read()
+
+                except Exception as e:
+
+                    st.warning(
+                        f"⚠️ El reporte existe pero no pudo ser leído: {e}"
+                    )
+
+                    st.session_state.comparacion_data = None
+
+            else:
+
+                # --------------------------------------------------------
+                # IMPORTANTE:
+                # No intentar abrir el archivo si no existe
+                # --------------------------------------------------------
+
+                st.warning(
+                    "⚠️ La comparación fue ejecutada, "
+                    "pero no se encontró el archivo Excel generado."
+                )
+
+                st.write("🔎 Ruta esperada:")
+                st.code(output_comparacion)
+
+                st.write("🔎 Archivos existentes en el directorio temporal:")
+
+                archivos_actuales = os.listdir(temp_dir)
+
+                if archivos_actuales:
+
+                    for archivo in archivos_actuales:
+                        st.write(f"• {archivo}")
+
+                else:
+
+                    st.write("No hay archivos en el directorio temporal.")
+
+                st.session_state.comparacion_data = None
+
+            # ============================================================
+            # 8. PROCESAR VALIDACIÓN DE ANEXOS FMM
+            # ============================================================
+            st.info("🔄 Validando anexos FMM...")
+
+            validador = ValidadorDeclaracionImportacionCompleto()
+
+            output_anexos = os.path.join(
+                temp_dir,
+                "validacion_anexos.xlsx"
+            )
+
+            # ============================================================
+            # 9. CAPTURAR SALIDA DE CONSOLA DEL VALIDADOR
+            # ============================================================
+            output_buffer = io.StringIO()
+
+            try:
+
+                with redirect_stdout(output_buffer):
+
+                    resultado_validacion = (
+                        validador.procesar_validacion_completa(
+                            temp_dir,
+                            output_anexos
+                        )
+                    )
+
+            except Exception:
+
+                st.error(
+                    "❌ Error durante la validación de anexos FMM."
+                )
+
+                st.code(
+                    traceback.format_exc()
+                )
+
+                return None
+
+            # ============================================================
+            # 10. OBTENER SALIDA DE CONSOLA
+            # ============================================================
+            consola_output = output_buffer.getvalue()
+
+            # ============================================================
+            # 11. EXTRAER INFORMACIÓN DE LA CONSOLA
+            # ============================================================
+            datos_proveedor = (
+                extraer_datos_de_consola_mejorado(
+                    consola_output
+                )
+            )
+
+            resumen_codigos, validacion_integridad = (
+                extraer_resumen_de_consola_mejorado(
+                    consola_output
+                )
+            )
+
+            estadisticas_validacion = (
+                extraer_estadisticas_de_consola_mejorado(
+                    consola_output,
+                    datos_dian
+                )
+            )
+
+            # ============================================================
+            # 12. PROCESAR RESULTADO DEL VALIDADOR
+            # ============================================================
+            reporte_anexos = None
+
+            if isinstance(resultado_validacion, dict):
+
+                reporte_anexos = resultado_validacion.get(
+                    "reporte_anexos"
+                )
+
+                datos_proveedor = resultado_validacion.get(
+                    "datos_proveedor",
+                    datos_proveedor
+                )
+
+                resumen_codigos = resultado_validacion.get(
+                    "resumen_codigos",
+                    resumen_codigos
+                )
+
+                estadisticas_validacion = resultado_validacion.get(
+                    "estadisticas_validacion",
+                    estadisticas_validacion
+                )
+
+            else:
+
                 reporte_anexos = resultado_validacion
 
-            # GUARDAR RESULTADOS EN SESSION_STATE - CLAVE PARA PERSISTENCIA
-            with open(output_comparacion, "rb") as f:
-                st.session_state.comparacion_data = f.read()
+            # ============================================================
+            # 13. VALIDAR REPORTE DE ANEXOS
+            # ============================================================
             if os.path.exists(output_anexos):
-                with open(output_anexos, "rb") as f:
-                    st.session_state.anexos_data = f.read()
-            else:
-                st.warning("⚠️ No se generó el reporte de anexos porque no se encontraron coincidencias entre el PDF y el Excel.")
-                st.session_state.anexos_data = None
-    
-            # Guardar también los DataFrames completos para mostrar resultados
-            st.session_state.reporte_comparacion = reporte_comparacion
-            st.session_state.reporte_anexos = reporte_anexos
-            st.session_state.datos_dian = datos_dian
-            st.session_state.datos_subpartidas = datos_subpartidas
-            # Guardar las variables de resumen
-            st.session_state.datos_proveedor = datos_proveedor
-            st.session_state.resumen_codigos = resumen_codigos
-            st.session_state.estadisticas_validacion = estadisticas_validacion
-            st.session_state.validacion_integridad = validacion_integridad
 
+                st.success(
+                    "✅ Reporte de validación de anexos generado correctamente."
+                )
+
+                try:
+
+                    with open(output_anexos, "rb") as f:
+                        st.session_state.anexos_data = f.read()
+
+                except Exception as e:
+
+                    st.warning(
+                        f"⚠️ El reporte de anexos existe "
+                        f"pero no pudo ser leído: {e}"
+                    )
+
+                    st.session_state.anexos_data = None
+
+            else:
+
+                st.warning(
+                    "⚠️ No se generó el reporte de anexos."
+                )
+
+                st.info(
+                    "Esto puede ocurrir cuando no se encontraron "
+                    "coincidencias entre el PDF y el Excel."
+                )
+
+                st.session_state.anexos_data = None
+
+            # ============================================================
+            # 14. GUARDAR RESULTADOS EN SESSION_STATE
+            # ============================================================
+
+            st.session_state.reporte_comparacion = (
+                reporte_comparacion
+            )
+
+            st.session_state.reporte_anexos = (
+                reporte_anexos
+            )
+
+            st.session_state.datos_dian = (
+                datos_dian
+            )
+
+            st.session_state.datos_subpartidas = (
+                datos_subpartidas
+            )
+
+            st.session_state.datos_proveedor = (
+                datos_proveedor
+            )
+
+            st.session_state.resumen_codigos = (
+                resumen_codigos
+            )
+
+            st.session_state.estadisticas_validacion = (
+                estadisticas_validacion
+            )
+
+            st.session_state.validacion_integridad = (
+                validacion_integridad
+            )
+
+            # ============================================================
+            # 15. RESUMEN FINAL
+            # ============================================================
+            st.success(
+                "🎉 Procesamiento de conciliación finalizado."
+            )
+
+            # ============================================================
+            # 16. RETORNAR RESULTADOS
+            # ============================================================
             return {
-                'comparacion': reporte_comparacion is not None,
-                'anexos': reporte_anexos is not None,
-                'datos_dian': datos_dian,
-                'datos_subpartidas': datos_subpartidas,
-                'reporte_comparacion': reporte_comparacion,
-                'reporte_anexos': reporte_anexos,
-                'datos_proveedor': datos_proveedor,
-                'resumen_codigos': resumen_codigos,
-                'estadisticas_validacion': estadisticas_validacion,
-                'validacion_integridad': validacion_integridad,
-                'multiples_subpartidas': multiples_subpartidas  # Nuevo campo para tracking
+                "comparacion": (
+                    reporte_comparacion is not None
+                    and os.path.exists(output_comparacion)
+                ),
+
+                "anexos": (
+                    reporte_anexos is not None
+                    and os.path.exists(output_anexos)
+                ),
+
+                "datos_dian": datos_dian,
+
+                "datos_subpartidas": datos_subpartidas,
+
+                "reporte_comparacion": reporte_comparacion,
+
+                "reporte_anexos": reporte_anexos,
+
+                "datos_proveedor": datos_proveedor,
+
+                "resumen_codigos": resumen_codigos,
+
+                "estadisticas_validacion": estadisticas_validacion,
+
+                "validacion_integridad": validacion_integridad,
+
+                "multiples_subpartidas": multiples_subpartidas
             }
 
+        # ================================================================
+        # MANEJO GENERAL DE ERRORES
+        # ================================================================
         except Exception as e:
-            st.error(f"❌ Error en el procesamiento: {str(e)}")
-            import traceback
-            st.code(traceback.format_exc())
+
+            st.error(
+                f"❌ Error en el procesamiento: {str(e)}"
+            )
+
+            st.code(
+                traceback.format_exc()
+            )
+
             return None
 
 def mostrar_resultados_en_pantalla():
@@ -781,10 +1109,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-

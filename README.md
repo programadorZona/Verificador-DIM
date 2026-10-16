@@ -29,4 +29,3 @@ Sistema integral de verificación y conciliación entre Declaraciones de Importa
 - PDF: pdfplumber
 - Excel: openpyxl, pandas
 - Despliegue: Streamlit Cloud / GitHub
-
