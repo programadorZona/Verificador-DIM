@@ -10,6 +10,29 @@ from openpyxl import load_workbook
 import warnings
 import unicodedata
 
+# En algunos PDF de la DIAN los dígitos iniciales del número de formulario
+# (impresos en una fuente más grande) quedan intercalados con la etiqueta, p. ej.:
+#   "4. Número de 8 for 8 mul 2 ario 026000118139-2"  ->  882026000118139
+# Este patrón captura la etiqueta (con dígitos mezclados) y el resto del número.
+PATRON_FORMULARIO_INTERCALADO = re.compile(
+    r"4\s*\.?\s*N[úu]mero\s*de\s*([^\n]{0,80}?)(\d{9,18})(?:-\d)?",
+    re.IGNORECASE
+)
+
+
+def buscar_numeros_formulario_intercalados(texto):
+    """Devuelve [(inicio, numero)] reconstruyendo números partidos por la etiqueta 'formulario'."""
+    resultados = []
+    for match in PATRON_FORMULARIO_INTERCALADO.finditer(texto):
+        etiqueta = match.group(1)
+        # La etiqueta, sin dígitos ni espacios, debe ser exactamente "formulario".
+        if re.sub(r"[\d\s]", "", etiqueta).lower() != "formulario":
+            continue
+        numero = re.sub(r"\D", "", etiqueta) + match.group(2)
+        if 15 <= len(numero) <= 16:
+            resultados.append((match.start(), numero))
+    return resultados
+
 # =============================================================================
 # CLASE PARA CORRECCIÓN DE NOMBRES
 # =============================================================================
@@ -92,7 +115,12 @@ class ExtractorDIANSimplificado:
             ],
             "77. Cantidad dcms.": [r"77\s*\.?\s*Cantidad\s*dcms\.[\s\S]*?comercial\s+(\d{1,4}(?:\.\d{3})*\.\d{2})"],
             "78. Valor FOB USD": [r"78\s*\.?\s*Valor\s*FOB\s*USD[\s\S]*?\n\s*([\d.,]+)"],
-            "79. Valor Fletes USD": [r"79\s*\.?\s*Valor\s*fletes\s*USD[\s\S]*?\n\s*[\d.,]+\s+([\d.,]+)"],
+            "79. Valor Fletes USD": [
+                # Formato donde el valor de fletes queda en la línea del rótulo 78:
+                # "79 . Valor fletes USD\n78 .Valor FOB USD 0.14 Concepto ..."
+                r"79\s*\.?\s*Valor\s*fletes\s*USD\s*\n\s*78\s*\.?\s*Valor\s*FOB\s*USD\s+(\d[\d.,]*)",
+                r"79\s*\.?\s*Valor\s*fletes\s*USD[\s\S]*?\n\s*[\d.,]+\s+(\d[\d.,]*)"
+            ],
             "80. Valor Seguros USD": [r"80\s*\.?\s*Valor\s*Seguros\s*USD[\s\S]*?\n\s*([\d.,]+)"],
             "81. Valor Otros Gastos USD": [r"81\s*\.?\s*Valor\s*Otros\s*Gastos\s*USD[\s\S]*?\n\s*[\d.,]+\s+([\d.,]+)"]
         }
@@ -183,7 +211,16 @@ class ExtractorDIANSimplificado:
             form_number_matches.extend(matches)
         
         form_number_matches.sort(key=lambda m: m.start())
-        
+
+        # El patrón de línea es más preciso: si encuentra declaraciones (formato
+        # normal o con el número intercalado en la etiqueta), se usa ese resultado.
+        intercalados = buscar_numeros_formulario_intercalados(texto_completo)
+        if intercalados:
+            for i, (inicio, numero) in enumerate(intercalados):
+                fin = intercalados[i + 1][0] if i + 1 < len(intercalados) else len(texto_completo)
+                di_bloques.append({'form_number': numero, 'text': texto_completo[inicio:fin]})
+            return di_bloques
+
         if not form_number_matches:
             form_num = self.extraer_campo(texto_completo, self.patrones["4. Número DI"], "4. Número DI")
             if form_num != "NO ENCONTRADO":
@@ -1034,8 +1071,15 @@ class ValidadorDeclaracionImportacionCompleto:
                     if texto: texto_completo += texto + "\n\n"
         except: return []
         
-        matches = list(re.finditer(r"4\s*\.?\s*N[uú]mero\s*de\s*formulario[\s\S]*?(\d{12,18})", texto_completo, re.IGNORECASE))
         declaraciones = []
+        intercalados = buscar_numeros_formulario_intercalados(texto_completo)
+        if intercalados:
+            for i, (inicio, numero) in enumerate(intercalados):
+                fin = intercalados[i + 1][0] if i + 1 < len(intercalados) else len(texto_completo)
+                declaraciones.append(self.extraer_datos_declaracion_individual(texto_completo[inicio:fin], numero))
+            return declaraciones
+
+        matches = list(re.finditer(r"4\s*\.?\s*N[uú]mero\s*de\s*formulario[\s\S]*?(\d{12,18})", texto_completo, re.IGNORECASE))
         for i, match in enumerate(matches):
             end_pos = matches[i+1].start() if i < len(matches) - 1 else len(texto_completo)
             declaraciones.append(self.extraer_datos_declaracion_individual(texto_completo[match.start():end_pos], match.group(1)))
